@@ -1,48 +1,218 @@
 """
-Database Schemas
+Database Schemas for Linqkeun Mini ERP
 
-Define your MongoDB collection schemas here using Pydantic models.
-These schemas are used for data validation in your application.
-
-Each Pydantic model represents a collection in your database.
-Model name is converted to lowercase for the collection name:
-- User -> "user" collection
-- Product -> "product" collection
-- BlogPost -> "blogs" collection
+Each Pydantic model below represents a MongoDB collection (collection name = class name lowercased).
+These models power validation for core ERP modules: Sales/CRM, Inventory, Procurement, Finance, HRM,
+Projects, and basic Analytics.
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List, Literal
+from datetime import date, datetime
+from pydantic import BaseModel, Field, EmailStr
 
-# Example schemas (replace with your own):
+# -------------------------------------------------
+# Core - Identity and RBAC
+# -------------------------------------------------
+class Organization(BaseModel):
+    name: str
+    country: Optional[str] = "ID"
+    currency: str = "IDR"
+
+class Role(BaseModel):
+    name: Literal[
+        "owner","admin","manager","sales","warehouse","procurement","finance","hr","employee"
+    ]
+    permissions: List[str] = Field(default_factory=list)
 
 class User(BaseModel):
-    """
-    Users collection schema
-    Collection name: "user" (lowercase of class name)
-    """
-    name: str = Field(..., description="Full name")
-    email: str = Field(..., description="Email address")
-    address: str = Field(..., description="Address")
-    age: Optional[int] = Field(None, ge=0, le=120, description="Age in years")
-    is_active: bool = Field(True, description="Whether user is active")
+    full_name: str
+    email: EmailStr
+    phone: Optional[str] = None
+    role: str = "employee"
+    is_active: bool = True
 
+# -------------------------------------------------
+# Sales & CRM
+# -------------------------------------------------
+class Customer(BaseModel):
+    name: str
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    company: Optional[str] = None
+    address: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    source: Optional[str] = Field(default=None, description="lead source")
+    assigned_to: Optional[str] = None
+
+class Lead(BaseModel):
+    customer_name: str
+    contact_email: Optional[EmailStr] = None
+    stage: Literal["new","qualified","proposal","won","lost"] = "new"
+    value: float = 0
+    expected_close: Optional[date] = None
+
+class Opportunity(BaseModel):
+    customer_id: Optional[str] = None
+    title: str
+    stage: Literal["prospecting","qualification","proposal","negotiation","won","lost"] = "prospecting"
+    amount: float
+    expected_close: Optional[date] = None
+
+class QuotationItem(BaseModel):
+    product_id: str
+    name: str
+    quantity: float = Field(gt=0)
+    price: float = Field(ge=0)
+    discount: float = 0
+
+class Quotation(BaseModel):
+    number: Optional[str] = None
+    customer_id: str
+    date_issued: date = Field(default_factory=date.today)
+    status: Literal["draft","sent","accepted","rejected"] = "draft"
+    items: List[QuotationItem]
+    notes: Optional[str] = None
+
+class InvoiceItem(BaseModel):
+    product_id: str
+    name: str
+    quantity: float = Field(gt=0)
+    price: float = Field(ge=0)
+    tax_rate: float = 0.11  # default 11% VAT (PPN)
+
+class Invoice(BaseModel):
+    number: Optional[str] = None
+    customer_id: str
+    date_issued: date = Field(default_factory=date.today)
+    due_date: Optional[date] = None
+    status: Literal["draft","sent","paid","overdue","cancelled"] = "draft"
+    currency: str = "IDR"
+    items: List[InvoiceItem]
+    notes: Optional[str] = None
+
+class Payment(BaseModel):
+    invoice_id: str
+    amount: float
+    date_paid: date = Field(default_factory=date.today)
+    method: Optional[str] = None
+    reference: Optional[str] = None
+
+# -------------------------------------------------
+# Inventory & Warehouse
+# -------------------------------------------------
 class Product(BaseModel):
-    """
-    Products collection schema
-    Collection name: "product" (lowercase of class name)
-    """
-    title: str = Field(..., description="Product title")
-    description: Optional[str] = Field(None, description="Product description")
-    price: float = Field(..., ge=0, description="Price in dollars")
-    category: str = Field(..., description="Product category")
-    in_stock: bool = Field(True, description="Whether product is in stock")
+    sku: str
+    name: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    uom: str = "pcs"
+    price: float = 0.0
+    barcode: Optional[str] = None
+    track_stock: bool = True
 
-# Add your own schemas here:
-# --------------------------------------------------
+class Warehouse(BaseModel):
+    name: str
+    code: Optional[str] = None
+    address: Optional[str] = None
 
-# Note: The Flames database viewer will automatically:
-# 1. Read these schemas from GET /schema endpoint
-# 2. Use them for document validation when creating/editing
-# 3. Handle all database operations (CRUD) directly
-# 4. You don't need to create any database endpoints!
+class StockMovement(BaseModel):
+    product_id: str
+    warehouse_id: str
+    quantity: float
+    type: Literal["in","out","transfer"] = "in"
+    ref_type: Optional[str] = None  # e.g., SO, PO, ADJ
+    ref_id: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+class Supplier(BaseModel):
+    name: str
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    rating: Optional[float] = Field(default=None, ge=0, le=5)
+
+# -------------------------------------------------
+# Procurement
+# -------------------------------------------------
+class PurchaseItem(BaseModel):
+    product_id: str
+    name: str
+    quantity: float
+    price: float
+
+class PurchaseOrder(BaseModel):
+    number: Optional[str] = None
+    supplier_id: str
+    status: Literal["draft","approved","ordered","received","cancelled"] = "draft"
+    items: List[PurchaseItem]
+    notes: Optional[str] = None
+
+# -------------------------------------------------
+# Finance & Accounting (simplified)
+# -------------------------------------------------
+class GLAccount(BaseModel):
+    code: str
+    name: str
+    type: Literal["asset","liability","equity","income","expense"]
+
+class JournalLine(BaseModel):
+    account_code: str
+    debit: float = 0.0
+    credit: float = 0.0
+    memo: Optional[str] = None
+
+class JournalEntry(BaseModel):
+    number: Optional[str] = None
+    date: date = Field(default_factory=date.today)
+    lines: List[JournalLine]
+    memo: Optional[str] = None
+
+# -------------------------------------------------
+# HRM
+# -------------------------------------------------
+class Employee(BaseModel):
+    employee_id: str
+    name: str
+    email: Optional[EmailStr] = None
+    position: Optional[str] = None
+    salary: float = 0.0
+
+class Attendance(BaseModel):
+    employee_id: str
+    date: date
+    status: Literal["present","absent","leave"] = "present"
+
+class Payroll(BaseModel):
+    employee_id: str
+    period: str  # e.g., 2025-01
+    gross: float
+    deductions: float = 0.0
+    net: float
+
+# -------------------------------------------------
+# Project Management
+# -------------------------------------------------
+class Project(BaseModel):
+    name: str
+    description: Optional[str] = None
+    owner_id: Optional[str] = None
+    status: Literal["active","on_hold","completed","cancelled"] = "active"
+
+class Task(BaseModel):
+    project_id: str
+    title: str
+    description: Optional[str] = None
+    assignee_id: Optional[str] = None
+    status: Literal["todo","in_progress","done"] = "todo"
+    estimated_hours: float = 0
+    logged_hours: float = 0
+
+# -------------------------------------------------
+# Minimal Analytics (placeholders for AI modules)
+# -------------------------------------------------
+class ForecastConfig(BaseModel):
+    target: Literal["sales","inventory"]
+    horizon_days: int = 30
+    group_by: Optional[str] = None  # e.g., product_id, customer_id
+
+# Note: The platform will read these schemas from GET /schema endpoint for validation/CRUD tooling.
